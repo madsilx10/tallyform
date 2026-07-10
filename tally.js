@@ -1,10 +1,9 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const readline = require('readline');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const ENDPOINT = 'https://api.tally.so/forms/mOv9qM/respond';
-const TOR_PROXY = 'socks5://127.0.0.1:9050';
 
 const FIELD_IDS = {
   sui:      '0a5ada9e-815e-4ddf-b821-714f22905294',
@@ -68,7 +67,14 @@ function readLines(file) {
   return fs.readFileSync(file, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
 }
 
-async function submit(sui, evm, email, username, useTor) {
+function loadProxies(file) {
+  return readLines(file).map(line => {
+    const [host, port, user, pass] = line.split(':');
+    return `http://${user}:${pass}@${host}:${port}`;
+  });
+}
+
+async function submit(sui, evm, email, username, proxyUrl) {
   const sessionUuid = randomUUID();
   const respondentUuid = randomUUID();
 
@@ -100,8 +106,8 @@ async function submit(sui, evm, email, username, useTor) {
     body: JSON.stringify(payload),
   };
 
-  if (useTor) {
-    options.agent = new SocksProxyAgent(TOR_PROXY);
+  if (proxyUrl) {
+    options.agent = new HttpsProxyAgent(proxyUrl);
   }
 
   const res = await fetch(ENDPOINT, options);
@@ -114,13 +120,14 @@ async function main() {
   const usernames = readLines('xusername.txt');
   const evms      = readLines('evm.txt');
   const suis      = readLines('sui.txt');
+  const proxies   = fs.existsSync('proxy.txt') ? loadProxies('proxy.txt') : [];
 
   const total = emails.length;
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = q => new Promise(r => rl.question(q, r));
 
-  console.log(`Total akun: ${total}`);
+  console.log(`Total akun: ${total} | Proxy: ${proxies.length}`);
   console.log('[1] Single akun');
   console.log('[2] Dari akun X sampai akhir');
 
@@ -135,23 +142,19 @@ async function main() {
     start = parseInt(await ask(`Mulai dari akun ke: `)) - 1;
   }
 
-  const torInput = (await ask('Pake Tor? (y/n): ')).trim().toLowerCase();
-  const useTor = torInput === 'y';
-
   rl.close();
-
-  if (useTor) console.log('Tor aktif → SOCKS5 127.0.0.1:9050');
 
   for (let i = start; i < end; i++) {
     const sui      = suis[i]      || '';
     const evm      = evms[i]      || '';
     const email    = emails[i]    || '';
     const username = usernames[i] || '';
+    const proxyUrl = proxies.length > 0 ? proxies[i % proxies.length] : null;
 
-    process.stdout.write(`[${i+1}/${total}] ${email} ... `);
+    process.stdout.write(`[${i+1}/${total}] ${email} ${proxyUrl ? `| proxy: ${proxyUrl.split('@')[1]}` : ''} ... `);
 
     try {
-      const { status, data } = await submit(sui, evm, email, username, useTor);
+      const { status, data } = await submit(sui, evm, email, username, proxyUrl);
       if (status === 200 && data.submissionId) {
         console.log(`OK | submissionId: ${data.submissionId} | respondentId: ${data.respondentId}`);
       } else {
