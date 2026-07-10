@@ -1,8 +1,10 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const readline = require('readline');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 
 const ENDPOINT = 'https://api.tally.so/forms/mOv9qM/respond';
+const TOR_PROXY = 'socks5://127.0.0.1:9050';
 
 const FIELD_IDS = {
   sui:      '0a5ada9e-815e-4ddf-b821-714f22905294',
@@ -66,7 +68,7 @@ function readLines(file) {
   return fs.readFileSync(file, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
 }
 
-async function submit(sui, evm, email, username) {
+async function submit(sui, evm, email, username, useTor) {
   const sessionUuid = randomUUID();
   const respondentUuid = randomUUID();
 
@@ -87,7 +89,7 @@ async function submit(sui, evm, email, username) {
     password: null,
   };
 
-  const res = await fetch(ENDPOINT, {
+  const options = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -96,8 +98,13 @@ async function submit(sui, evm, email, username) {
       'Tally-Version': '2025-01-15',
     },
     body: JSON.stringify(payload),
-  });
+  };
 
+  if (useTor) {
+    options.agent = new SocksProxyAgent(TOR_PROXY);
+  }
+
+  const res = await fetch(ENDPOINT, options);
   const data = await res.json();
   return { status: res.status, data };
 }
@@ -128,7 +135,12 @@ async function main() {
     start = parseInt(await ask(`Mulai dari akun ke: `)) - 1;
   }
 
+  const torInput = (await ask('Pake Tor? (y/n): ')).trim().toLowerCase();
+  const useTor = torInput === 'y';
+
   rl.close();
+
+  if (useTor) console.log('Tor aktif → SOCKS5 127.0.0.1:9050');
 
   for (let i = start; i < end; i++) {
     const sui      = suis[i]      || '';
@@ -139,9 +151,9 @@ async function main() {
     process.stdout.write(`[${i+1}/${total}] ${email} ... `);
 
     try {
-      const { status, data } = await submit(sui, evm, email, username);
+      const { status, data } = await submit(sui, evm, email, username, useTor);
       if (status === 200 && data.submissionId) {
-        console.log(`OK | submissionId: ${data.submissionId}`);
+        console.log(`OK | submissionId: ${data.submissionId} | respondentId: ${data.respondentId}`);
       } else {
         console.log(`GAGAL | ${JSON.stringify(data)}`);
       }
