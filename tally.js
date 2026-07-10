@@ -1,7 +1,6 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const readline = require('readline');
-const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const ENDPOINT = 'https://api.tally.so/forms/mOv9qM/respond';
 
@@ -67,14 +66,7 @@ function readLines(file) {
   return fs.readFileSync(file, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
 }
 
-function loadProxies(file) {
-  return readLines(file).map(line => {
-    const [host, port, user, pass] = line.split(':');
-    return `http://${user}:${pass}@${host}:${port}`;
-  });
-}
-
-async function submit(sui, evm, email, username, proxyUrl) {
+async function submit(sui, evm, email, username) {
   const sessionUuid = randomUUID();
   const respondentUuid = randomUUID();
 
@@ -95,7 +87,7 @@ async function submit(sui, evm, email, username, proxyUrl) {
     password: null,
   };
 
-  const options = {
+  const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -104,13 +96,8 @@ async function submit(sui, evm, email, username, proxyUrl) {
       'Tally-Version': '2025-01-15',
     },
     body: JSON.stringify(payload),
-  };
+  });
 
-  if (proxyUrl) {
-    options.agent = new HttpsProxyAgent(proxyUrl);
-  }
-
-  const res = await fetch(ENDPOINT, options);
   const data = await res.json();
   return { status: res.status, data };
 }
@@ -120,14 +107,13 @@ async function main() {
   const usernames = readLines('xusername.txt');
   const evms      = readLines('evm.txt');
   const suis      = readLines('sui.txt');
-  const proxies   = fs.existsSync('proxy.txt') ? loadProxies('proxy.txt') : [];
 
   const total = emails.length;
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = q => new Promise(r => rl.question(q, r));
 
-  console.log(`Total akun: ${total} | Proxy: ${proxies.length}`);
+  console.log(`Total akun: ${total}`);
   console.log('[1] Single akun');
   console.log('[2] Dari akun X sampai akhir');
 
@@ -149,12 +135,11 @@ async function main() {
     const evm      = evms[i]      || '';
     const email    = emails[i]    || '';
     const username = usernames[i] || '';
-    const proxyUrl = proxies.length > 0 ? proxies[i % proxies.length] : null;
 
-    process.stdout.write(`[${i+1}/${total}] ${email} ${proxyUrl ? `| proxy: ${proxyUrl.split('@')[1]}` : ''} ... `);
+    process.stdout.write(`[${i+1}/${total}] ${email} ... `);
 
     try {
-      const { status, data } = await submit(sui, evm, email, username, proxyUrl);
+      const { status, data } = await submit(sui, evm, email, username);
       if (status === 200 && data.submissionId) {
         console.log(`OK | submissionId: ${data.submissionId} | respondentId: ${data.respondentId}`);
       } else {
